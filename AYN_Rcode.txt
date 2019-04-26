@@ -1,0 +1,241 @@
+---
+title: "QuantProject"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo = FALSE}
+library(survival)
+library(ggplot2)
+library(survminer)
+library(survival)
+library(flexsurv)
+library(gridExtra)
+library(caret)
+data(lung)
+library(MASS)
+head(lung$status)
+```
+
+```{r}
+par(mfrow = c(2,2))
+hist(lung$age, main = "Age Distribution", col = "skyblue")
+hist(lung$ph.ecog, main = "Distributio of ph.ecog Scores", col = "skyblue")
+hist(lung$wt.loss, main = "Distributio of Weight Loss", col = "skyblue")
+hist(lung$ph.karno, main = "Distributio of ph.karno Scores", col = "skyblue")
+```
+
+```{r}
+
+surv <- Surv(time = lung$time, event = lung$status)
+all <- survfit(surv ~ 1, data = lung)
+plot(all, main = "KM Survival Estimate", xlab = "Days", ylab = "P", col = "darkred")
+```
+
+```{r}
+#cumulative hazard function 
+hazard <- plot(all, fun="cumhaz", col = "darkred", main = "Cumulative Hazard Function", xlab = "Number of Days")
+
+```
+
+
+```{r}
+#surival function of age
+#divided into two groups those over and under the mean age
+ageCategory <- as.numeric(lung$age>mean(lung$age))
+age <- survfit(surv ~ ageCategory, data = lung)
+ageplot <-ggsurvplot(age,data = lung, pval = TRUE,linetype = "solid")
+ageplot
+```
+
+```{r}
+#survival plot for sex 
+
+sexFit <- survfit(surv ~ sex, data = lung)
+sexplot <- ggsurvplot(sexFit,data = lung, pval = TRUE,linetype = "solid")
+sexplot
+```
+
+```{r}
+#weight loss, 1 = gained or no loss, 0 = lost weight
+wt <- as.numeric(lung$wt.loss >= 0)
+wtFit <- survfit(surv ~ wt, data = lung)
+wtplot <- ggsurvplot(wtFit,data = lung, pval = TRUE,linetype = "solid")
+wtplot
+```
+
+```{r}
+#weight loss, 1 = gained or no loss, 0 = lost weight
+wt <- as.numeric(lung$wt.loss >= 0)
+wtFit <- survfit(surv ~ wt, data = lung)
+wtplot <- ggsurvplot(wtFit,data = lung, pval = TRUE,linetype = "solid")
+wtplot
+```
+
+
+
+```{r}
+library(flexsurv)
+exp <- flexsurvreg(surv~1, dist="exp")
+gamma <- flexsurvreg(surv~1, dist="gamma")
+genGamma <- flexsurvreg(surv~1, dist="gengamma")
+log <- flexsurvreg(surv~1, dist="lognormal")
+
+AICs <- c(exp$AIC, gamma$AIC, genGamma$AIC, log$AIC)
+logs <- c(exp$loglik, gamma$loglik, genGamma$loglik, log$loglik)
+dists <- c("Exponential", "Gamma", "Generalized Gammal", "log")
+table <- rbind(dists, AICs, logs)
+
+
+par(mfrow = c(2,2))
+plot(exp,col = 5,main = "Exponential Fitted Curve")
+
+plot(gamma, col = 2, main = "Gamma Fitted Curve")
+
+plot(genGamma, col = 3, main = "Generalized Gamma Fitted Curve")
+
+plot(log, col = 4, main = "Log Fitted Curve")
+
+table
+```
+Survival proportions can be accurately modeled using the gamma distrabution 
+
+
+```{r}
+#creating cox survival object
+lung <-na.omit(lung)
+survCox <- Surv(time = lung$time, event = lung$status)
+```
+
+```{r}
+#cox univariant model with sex only
+coxSex <- coxph(survCox ~ lung$sex, data = lung)
+summary(coxSex)
+
+```
+
+```{r}
+#cox univariant model with age only
+coxAge <-coxph(survCox ~ lung$age, data = lung)
+summary(coxAge)
+```
+
+```{r}
+#cox univariant model with age only
+coxecog <-coxph(survCox ~ lung$ph.ecog, data = lung)
+summary(coxecog)
+
+```
+
+```{r}
+#multivariate cox model with stepwise selection of variables
+Train <- createDataPartition(lung$status, p=0.75, list=FALSE)
+training <- lung[ Train, ]
+testing <- lung[ -Train, ]
+
+
+res.cox <- coxph(survCox ~ lung$age + lung$sex + lung$ph.ecog +lung$ph.karno + lung$pat.karno + lung$meal.cal + lung$wt.loss, data =  training)
+sp <- step(res.cox, data = training)
+```
+
+```{r}
+#updated model based on results of the step selection
+update.cox <- coxph(survCox ~ lung$sex + lung$ph.ecog + lung$ph.karno + 
+    lung$pat.karno + lung$wt.loss, data = lung)
+summary(update.cox)
+
+```
+
+
+```{r}
+k<-1000
+acc <- NULL
+
+
+for(i in 1:k){
+Train <- createDataPartition(lung$status, p=0.75, list=FALSE)
+training <- lung[ Train, ]
+testing <- lung[ -Train, ]
+
+testSurv <- Surv(time = training$time, event = training$status)
+
+update.coxT <- coxph(testSurv ~ sex + ph.ecog + ph.karno + 
+   pat.karno + wt.loss, data = training)
+
+pred<-predict(update.coxT, newdata=testing,type = "risk")
+
+
+results <- ifelse(pred > 0.5,1,0)
+answers <- testing$status
+misClasificError <- mean(answers != results)
+acc[i]=1-misClasificError
+}
+mean(acc)
+
+```
+
+```{r}
+hist(acc,xlab='Accuracy',ylab='Freq',
+     col='skyblue', main = "Accuracy of Cox Model 100 Iterations")
+
+```
+
+```{r}
+#testing cox model assumptions 
+
+assump <- cox.zph(update.cox)
+print("From these tests we find that we can consider all of the covarientes significant ")
+```
+
+```{r}
+ggcoxzph(assump) 
+#plot of the Schoenfeld residuals
+#alligns with assumptions and the results of the previous test 
+```
+
+```{r}
+ggcoxdiagnostics(update.cox, type = "dfbeta",linear.predictions = FALSE,ggtheme = theme_minimal())
+#testing for outliers in each of the covarients 
+```
+While age was significant when considered on its own after the stepwise process it is exclused from the covarients
+
+```{r}
+
+#install.packages("ranger")
+library(ranger)
+ 
+#Fitting the random forest
+ranger <- ranger(Surv(lung$time,lung$status==2) ~.,data=lung,num.trees = 500, importance = "permutation",seed = 1)
+
+```
+
+
+```{r}
+#ploting all models
+coxfit <- survfit(update.cox)
+rangePlot <- plot(ranger$unique.death.times,ranger$survival[1,], type = "l", ylim = c(0,1),col = "darkred", main = "RM vs. Cox vs. KM", xlab = "Days", ylab = "p")
+lines(all,conf.int = F, col = "navy")
+lines(coxfit, col = "green", conf.int = F)
+legend("topright",legend = c("Cox", "KM", "RF"), col = c("navy", "green","darkred"),lty = 1)
+```
+
+
+```{r}
+plot(all, main = "Cox PHM vs. Kaplan-Meier", xlab = "Days", ylab = "p", col = "darkred", conf.int = F)
+lines(survfit(update.cox),conf.int = F, col = "navy")
+legend("topright",legend = c("Cox", "KM"), col = c("darkred", "navy"),lty = 1)
+
+```
+
+```{r}
+data.frame(sort(ranger$variable.importance,decreasing = TRUE))
+#shows the importance of each variable as determined by the random forest model
+```
+
+
+
+
+
